@@ -64,8 +64,7 @@ class SongObj():
             duration
         )
 
-        if youtubeLink is None:
-            print(f'No youtube match could be found for {songName}')
+        print(f'{songName[:25]:>25s}: {youtubeLink}')
 
         # try to get lyrics from Genius
         try:
