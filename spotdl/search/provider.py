@@ -210,7 +210,8 @@ def __query_ytmusic(
     return collected_results
 
 
-def __prepare_list(list_str: typing.List[str]):
+def __prepare_list(input_list: typing.List[str]):
+    list_str = input_list
     for word in list_str:
         list_str.remove(word)
 
