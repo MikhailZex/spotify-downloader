@@ -1,15 +1,12 @@
 """
-Provides all defaults-layer functionality for `SongObj` generation except the `SongObj` class
-itself
+Tools to search YouTube Music for a Song match from available metadata.
 """
 
 # ===============
 # === Imports ===
 # ===============
-import json
 import typing
 
-from textwrap import shorten
 from ytmusicapi import YTMusic
 from bs4 import BeautifulSoup
 from requests import get
@@ -18,270 +15,325 @@ from requests import get
 # =============================
 # === main / defaults-layer ===
 # =============================
-
-
 def get_youtube_link(
-    song_name: str, song_artists: typing.List["str"], album: str, song_duration: int
+    song_name: str, song_artists: typing.List[str], song_album: str, song_duration: int
 ) -> typing.Optional[str]:
     """
-    attempts to find "THE" youtube link to the song according to inputs
+    ### Args
+    - song_name: `str`, name of the song to be found
+    - song_artists: `List[str]`, list of contributing artits to the said song
+    - song_album: `str`, name of the album to which said song belongs to
+    - song_duration: `int`, length of the song in seconds
+
+    ### Returns
+    - `str` if a reasonable match is found, the (supposed) best video on YouTube for the said song
+    - `None` if all results found are likely to be wrong
+
+    ### Errors raised
+    - None
+
+    ### Function / Notes
+    - duration_match =  \\(1 - \\frac{\\Delta time}{15}\\). If the time difference between source
+    data and YTM result is greater than 15 seconds, we assume the result is incorrect. The
+    \\(\\frac{\\Delta time}{15}\\) is the actual match measure, smaller the better. the
+    "1-" part (a) flips this to greater is better to keep inline with the other measures and
+    (b) makes duration_match negative if \\(\\Delta time > 15\\), such results with negative match
+    values are dumped.
+
+    - album_match is either 0 or 1, no intermediate values. Song results with a perfect
+    album match are assigned 1, video results are assigned 0, Song results with an incorrect
+    album match are dumped, the idea is that if the album is different, even if the result is
+    very close by other metrics, it's definitely not the same Song.
+
+    - name_match = \\(\\frac{\\text{number of common words between song name and result title}}
+    {\\text{number of words in the bigger one}}\\), if the value of name_match is less than 0.1,
+    the result is dropped. It's common sense, more extra words in the name, farther from the
+    actual song it is. The cut-off value of 0.1 was reached after running a sample search of
+    100 Songs.
+
+    - artist_match = \\(\\frac{\\text{number of common artists between song and result}}
+    {\\text{number of artists in the bigger one}}\\), the cut-off here is 0. This is because,
+    YouTube Music supplies the username of the uploader if Song Artists aren't known - there might
+    be cases with no common artists.
+
+    - avg_match = average of all the above, this is the deciding factor. The link to the result with
+    the highest average match is what is actually returned.
+
+    - The number of common words is slightly fuzzy, *'Vogel Im Kafig'* will be matched against
+    *'Vogel Im Käfig'* with a score 3-on-3 in spite of the fact that *'kafig'* is not the exact
+    same as *'Käfig'*
     """
+    ytm_results = __query_ytmusic(song_name=song_name, song_artists=song_artists)
 
-    # !get search results from YTMusic
-    search_results = __query_ytmusic(song_name=song_name, song_artists=song_artists)
-
-    if len(search_results) == 0:
-        return None
-
-    # !keep track of top result
-    # when a result has a higher "match score" than the top_match_score, the top_match_score
-    # and top_match_link are both updated, once all the results are checked, you end up with
-    # the top-most result which is theoretically the best/correct match
     top_match_score = 0
-    top_match_link = None
+    top_result = None
 
-    for result in search_results:
-        # !calc avg match
-
-        # each result contains the following, it would do well to note this somewhere, we'll
-        # be refering to these dict-keys a lot in the next few lines
-        #   - songName
-        #   - songArtists (list, lower case)
-        #   - albumName
-        #   - duration (number of seconds, int)
-        #   - link
-
-        # song name match
-        # name_match = common words in the name / total words in the supplied name
-        name_match = __common_elm_fraction(
-            source=song_name.split(" "), result=result["songName"].split(" ")
-        )
-
+    for result in ytm_results:
+        # !name_match
+        name_match = __common_elm_fraction(src_list=song_name, res_list=result["name"])
         if name_match < 0.1:
-            # skip result, it's probably not a good match, less than 1 out of 4 words
-            # from the supplied name are in the result
             continue
 
-        # song artist match
-        # same as name_match but here its about the contributing artists instead
-        artist_match = __common_elm_fraction(
-            source=song_artists, result=result["songArtists"]
-        )
+        # !album_match
+        if result["album"] is None:
+            album_match = 0
+        else:
+            if result["album"].lower() == song_album.lower():
+                album_match = 1
+            else:
+                # song from a different album, definitely not what we want, skip it
+                continue
 
-        # song duration match
-        # duration_match = 1 - (time delta in sec/15 sec), the idea is that 1 indicates the best
-        # possible score and 0 indicates the lease score, if a score is less than zero, the result
-        # will be dropped, if the time difference is greater than 15 sec, is not the correct match
-        # anyways
-        duration_match = 1 - (abs(result["duration"] - song_duration) / 15)
+        # !duration match
+        delta = abs(result["duration"] - song_duration)
+        duration_match = 1 - (delta / 15)
 
         if duration_match < 0:
-            # skip this result
             continue
 
-        # album_match
-        # if results is a song: album_match = 1 if its a perfect match, else skip the result
-        # because, even if the other match scores are good, it's definitely a different song
-        #
-        # if result is an album: album_match = 0
-        #
-        # note that the albumName in the result will be lower case
-        if result["albumName"] == album.lower():
-            album_match = 1
-        elif result["albumName"] != "":
-            continue
-        else:
-            album_match = 0
+        # !artist_match
+        artist_match = __common_elm_fraction(
+            src_list=song_artists, res_list=result["artists"]
+        )
 
-        # avg match
-        avg_match = (name_match + artist_match + album_match + duration_match) / 4
+        # !avg_match and top_result update
+        avg_match = (name_match + album_match + duration_match + artist_match) / 4
 
-        # !update top match as required
         if avg_match > top_match_score:
             top_match_score = avg_match
-            # top_match_link is always a str but mypy doesn't recognize it as such, so we wrap it
-            # in a str() conversion so mypy will shut up on the final return statement
-            top_match_link = str(result["link"])
+            top_result = result
 
-    if top_match_score < 0.75:
-        result_song_name = result["songName"]
+    if top_match_score <= 0.75:
+        if top_result is not None:
+            with open("possible errors.txt", "ab") as file:
 
-        file = open("possible errors (delete when ever you want).txt", "ab")
-        file.write(
-            f"{shorten(song_artists[0], 15):>15s} - {shorten(song_name, 40):40s} "
-            f"{top_match_score:0.2f}pt {top_match_link}: {result_song_name}\n".encode(),
-        )
-        file.close()
+                file.write(
+                    f"{', '.join(song_artists)} - {song_name}\n {top_match_score:0.2f}pt "
+                    f"{top_result['link']}: {top_result['name']}\n".encode()
+                )
 
-    return top_match_link
+        with open("skipped.txt", "ab") as file:
+            file.write(f"{', '.join(song_artists)} - {song_name}\n".encode())
+
+    if top_result is None:
+        return None
+
+    return top_result["link"]
 
 
-# ================================================
-# === support / background / private functions ===
-# ================================================
+# ========================================================
+# === support / helper /background / private functions ===
+# ========================================================
 def __query_ytmusic(
     song_name: str, song_artists: typing.List[str]
 ) -> typing.List[dict]:
     """
-    query YTMusic with "{artist names} - {song name}" and returns simplified song and video results
-    as a `list[dict]`, each `dict` containing the following (in lower case):
-        - songName
-        - songArtists (list, lower case)
-        - albumName
-        - duration (number of seconds, int)
-        - link
+    ### Args
+    - song_name: `str`, name of the song to be found
+    - song_artists: `List[str]`, list of all contributing artists
 
-    NOTE: returns an empty string for album name if album name is not found.
+    ### Returns
+    - `List[dict]`, [YTM](https://music.youtube.com) query results as dict. Each dict contains the
+    following keys:
+        - name: `str`, name of the result
+        - album: `Optional[str]`, name of the result's album if available, else `None`
+        - duration: `int`, length of the result in seconds
+        - artists: `List[str]`, names of all contributing artists or usename of uploader
+        - link: `str`, youtube link
+
+    ### Errors raised
+    - None
+
+    ### Function / Notes
+    - We assume that results are always found
+    - Results with the words "cover", "festival", "amv", "male", "female" or "switching vocals"
+    are dumped. The words "male" and "female" are included to handle "Male Version" &
+    "Female Version" type song covers.
     """
 
-    # !construct a search string
-    artist_str = ""
-    for artist in song_artists:
-        artist_str += artist + ", "
+    # !construct query and get results
+    query = f"{', '.join(song_artists)} - {song_name}"
 
-    # `[:-2]` removes trailing comma; eg. "Aiobahn, Rionos, " --> "Aiobahn, Rionos - Motivation"
-    query = artist_str[:-2] + " - " + song_name
-
-    # !create a YTMusic client
     ytm_client = YTMusic()
-
-    # !search for both song and video results
     search_results = ytm_client.search(query=query, filter="videos")
     search_results += ytm_client.search(query=query, filter="songs")
 
-    # all the simplified results will be stored in this
-    collected_results = []
+    simplified_results = []
 
-    # !simplify each result
     for result in search_results:
-        # !skip bad results (missing keys/NoneType results)
-        skip_result = False
-
-        for key in ["artists", "album", "resultType", "duration", "title"]:
-            # NOTE: if key is not in the dict, NoneType is returned
-            if result.get(key) is None:
-                # video results do not have album metadata
-                if not (result["resultType"] == "video" and key == "album"):
-                    # placing the continue statement here will skip to the next
-                    # key and not the next result, hence the convoluted scheme
-                    skip_result = True
-
-        if skip_result:
+        # !validate 'album' field & determine the return dict's 'album' field
+        if result["resultType"] == "song" and result["album"] is None:
             continue
 
-        # !contributing_artists
-        r_artists = []
-        for r_artist in result["artists"]:
-            r_artists.append(r_artist["name"].lower())
-
-        # !album_name
-        r_album_name = ""
         if result["resultType"] == "song":
-            r_album_name = result["album"]["name"].lower()
+            res_album = result["album"]["name"]
+        else:
+            res_album = None
 
-        # !duration
+        # !validate & parse duration for the return dict's 'duration' field
         try:
             # hh:mm:ss --> [ss, mm, hh]
-            duration_bits = list(reversed(result["duration"].split(":")))
+            time_bits = list(reversed(result["duration"].split(":")))
 
-        # These errors get thrown when the duration returned is not in the form hh:mm:ss
-        # Sometimes, duration itself is not returned, we can't evaluate such results,
-        # they are dropped
+            # for None / other non string return types
+            if not isinstance(result["duration"], str) or len(time_bits) > 3:
+                continue
+
+            res_duration = sum(a * int(b) for a, b in zip([1, 60, 3600], time_bits))
         except ValueError:
+            # These errors get throws when the duration returned is not in the form hh:mm:ss
+            # Sometimes, the duration itself is not returned - we can't evaluate such results
+            # such results are dropped
             continue
 
-        if len(duration_bits) > 3:
-            raise ValueError(f"supplied duration {result['duration']} is 1D+ in length")
+        # !determine the return dict's 'artists' field
+        # we assume that the result's 'artists' field is never `None` as YTM returns the uploader's
+        # username if the song's artist is unknown (which is usually what happens for videos)
+        res_artists = []
+        for artist in result["artists"]:
+            res_artists.append(artist["name"])
 
-        r_duration = 0
-        for i in range(len(duration_bits)):
-            # basically do seconds*1 + mins*60 +  hours * 3600
-            r_duration += int(duration_bits[i]) * (60 ** i)
+        # !validate the results title
+        # 'male' and 'female' are included for 'male version'/'female version' results to be
+        # filtered out
+        # !validate the results title
+        # 'male' and 'female' are included for 'male version'/'female version' results to be
+        # filtered out
+        forbidden_words = [
+            word
+            for word in [
+                "cover",
+                "festival",
+                "amv",
+                "male",
+                "female",
+                "switching vocals",
+            ]
+            if word in result["title"].lower() and word not in song_name.lower()
+        ]
 
-        skip_result = False
-
-        for skip_word in ["festival", "cover", "male", "female", "switching vocals"]:
-            if (
-                skip_word in result["title"].lower()
-                and skip_word not in song_name.lower()
-            ):
-                skip_result = True
-
-        if skip_result:
+        if len(forbidden_words) > 0:
             continue
 
-        collected_results.append(
+        res_name = result["title"]
+
+        simplified_results.append(
             {
-                "songName": result["title"],
-                "songArtists": r_artists,
-                "albumName": r_album_name,
-                "duration": r_duration,
+                "name": res_name,
+                "artists": res_artists,
+                "album": res_album,
+                "duration": res_duration,
                 "link": f"https://www.youtube.com/watch?v={result['videoId']}",
             }
         )
 
-    return collected_results
+    return simplified_results
 
 
-def __prepare_list(input_list: typing.List[str]):
-    list_str = input_list.copy()
-    for word in list_str:
-        list_str.remove(word)
+def __common_elm_fraction(
+    src_list: typing.Union[typing.List[str], str],
+    res_list: typing.Union[typing.List[str], str],
+) -> float:
+    """
+    ### Args
+    - src_list: `Union[List[str], str]`, a sentence of set of words to be compared
+    - res_list: `Union[List[str], str]`, a sentence of set of words to be compared against
 
-        if not word.isalnum():
-            n_word = word.lower()
+    ### Returns
+    - `float`, \\(\\frac{\\text{number of common words between the two strings/lists}}
+    {\\text{number of words in the bigger string/list}}\\)
 
-            for letter in n_word:
-                if not letter.isalnum():
-                    n_word = n_word.replace(letter, "")
+    ### Errors raised
+    - None
+    """
+    # !construct set's of prepared words
+    if isinstance(src_list, str):
+        src_list = src_list.split(" ")
 
-            if n_word != "":
-                list_str.append(n_word)
+    if isinstance(res_list, str):
+        res_list = res_list.split(" ")
 
-        else:
-            list_str.append(word.lower())
+    src_set = [__prepare_word(word=word) for word in set(src_list)]
+    res_set = [__prepare_word(word=word) for word in set(res_list)]
 
-    return list_str
+    # !find number of common words
+    common_words = 0
+    for src_word in src_set:
+        for res_word in res_set:
+            if __is_similar(src_word=src_word, res_word=res_word):
+                common_words += 1
 
-
-def __is_similar(word_a: str, word_b: str):
-    if word_a == word_b:
-        return True
-
-    # yes, you would expect an elif statement here, but that is apparently against pylint's
-    # sensibilities. See: https://stackoverflow.com/q/63755912
-    if len(word_a) != len(word_b):
-        return False
-
-    hit_count = 0
-
-    for _index in range(len(word_a)):
-        if word_a[_index] != word_b[_index]:
-            hit_count += 1
-
-    if hit_count < 2:
-        return True
-
-    return False
-
-
-def __common_elm_fraction(source: typing.List[str], result: typing.List[str]) -> float:
-
-    src = __prepare_list(source)
-    res = __prepare_list(result)
-
-    similar_word_count = 0
-
-    for src_word in src:
-        for res_word in res:
-            if __is_similar(src_word, res_word):
-                similar_word_count += 1
+                # go to next word from outer set, (probably) nothing else is going to match,
+                # even if it did it's likely to be a erroneous
                 break
 
-    if len(src) > len(res):
-        return similar_word_count / len(src)
+    # !which is greater?
+    if len(src_set) > len(res_set):
+        greater_word_length = len(src_set)
     else:
-        return similar_word_count / len(res)
+        greater_word_length = len(res_set)
+
+    return common_words / greater_word_length
+
+
+def __prepare_word(word: str) -> str:
+    """
+    ### Args
+    - word: `str`, word to be processed
+
+    ### Returns
+    - `str`, word with all non-alphanumeric characters removed in lower case (spaces
+    are removed too)
+
+    ### Errors raised
+    - None
+    """
+    prepared_word = ""
+
+    for letter in word:
+        if letter.isalnum():
+            prepared_word += letter
+
+    return prepared_word.lower()
+
+
+def __is_similar(src_word: str, res_word: str) -> bool:
+    """
+    ### Args
+    - src_word: `str`, word to be compared
+    - res_word: `str`, word to be compared against
+
+    ### Returns
+    - `bool`, True if words are similar, else false
+
+    ### Errors raised
+    - None
+
+    ### Functioning / Notes
+    - Let's say you were comparing 2 song names: *'Vogel Im Kafig'* against *'Vogel Im Käfig'*
+    on a word to word basis, direct equality of strings would mean *'Kafig'* is not the same
+    as *'Käfig'*. Similarly, you would face the same issue with misspelt titles. This function
+    handles that by allowing at max 2 single character mismatches (a -> ä would be a single
+    mismatch) before deciding that 2 words are dissimilar.
+    """
+    # You might notice the lack of the 'else' part of the traditional if-else statements,
+    # that is because pylint has an issue with it. See: https://stackoverflow.com/q/63755912
+    if src_word == res_word:
+        return True
+
+    if not len(src_word) == len(res_word):
+        return False
+
+    difference_count = 0
+
+    for _i in range(len(src_word)):
+        if src_word[_i] != res_word[_i]:
+            difference_count += 1
+
+    if difference_count > 2:
+        return False
+
+    return True
 
 
 def get_song_lyrics(song_name: str, song_artists: typing.List[str]) -> str:
