@@ -7,6 +7,7 @@ import sys
 from spotdl.download.downloader import DownloadManager
 from spotdl.search.songObj import SongObj
 from spotdl.search.spotifyClient import SpotifyClient
+
 # ! Song Search from different start points
 from spotdl.search.utils import (
     get_playlist_tracks,
@@ -49,7 +50,7 @@ from spotdl.search.utils import (
 # ! P.S. Tell me what you think. Up to your expectations?
 
 # ! Script Help
-help_notice = '''
+help_notice = """
 To download a song run,
     spotdl [trackUrl]
     ex. spotdl https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b?si=1stnMF5GSdClnIEARnJiiQ
@@ -80,19 +81,19 @@ You can queue up multiple download tasks by separating the arguments with spaces
 
 spotDL downloads up to 4 songs in parallel, so for a faster experience,
 download albums and playlist, rather than tracks.
-'''
+"""
 
 
 def console_entry_point():
-    '''
+    """
     This is where all the console processing magic happens.
     Its super simple, rudimentary even but, it's dead simple & it works.
-    '''
+    """
     arguments = parse_arguments()
 
     SpotifyClient.init(
-        client_id='4fe3fecfe5334023a1472516cc99d805',
-        client_secret='0f02b7c483c04257984695007a4a8d5c'
+        client_id="4fe3fecfe5334023a1472516cc99d805",
+        client_secret="0f02b7c483c04257984695007a4a8d5c",
     )
 
     if arguments.path:
@@ -104,37 +105,38 @@ def console_entry_point():
     with DownloadManager() as downloader:
 
         for request in arguments.url:
-            if 'open.spotify.com' in request and 'track' in request:
-                print('Fetching Song...')
+            if "open.spotify.com" in request and "track" in request:
+                print("Fetching Song...")
                 song = SongObj.from_url(request)
 
                 if song.get_youtube_link() is not None:
                     downloader.download_single_song(song)
                 else:
-                    print('Skipping %s (%s) as no match could be found on youtube' % (
-                        song.get_song_name(), request
-                    ))
+                    print(
+                        "Skipping %s (%s) as no match could be found on youtube"
+                        % (song.get_song_name(), request)
+                    )
 
-            elif 'open.spotify.com' in request and 'album' in request:
-                print('Fetching Album...')
+            elif "open.spotify.com" in request and "album" in request:
+                print("Fetching Album...")
                 songObjList = get_album_tracks(request)
 
                 downloader.download_multiple_songs(songObjList)
 
-            elif 'open.spotify.com' in request and 'playlist' in request:
-                print('Fetching Playlist...')
+            elif "open.spotify.com" in request and "playlist" in request:
+                print("Fetching Playlist...")
                 songObjList = get_playlist_tracks(request)
 
                 downloader.download_multiple_songs(songObjList)
 
-            elif 'open.spotify.com' in request and 'artist' in request:
-                print('Fetching artist...')
+            elif "open.spotify.com" in request and "artist" in request:
+                print("Fetching artist...")
                 artistObjList = get_artist_tracks(request)
 
                 downloader.download_multiple_songs(artistObjList)
 
-            elif request.endswith('.spotdlTrackingFile'):
-                print('Preparing to resume download...')
+            elif request.endswith(".spotdlTrackingFile"):
+                print("Preparing to resume download...")
                 downloader.resume_download_from_tracking_file(request)
 
             else:
@@ -158,5 +160,5 @@ def parse_arguments():
     return parser.parse_args()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     console_entry_point()

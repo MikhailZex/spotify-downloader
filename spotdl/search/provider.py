@@ -108,12 +108,12 @@ def get_youtube_link(
             with open("possible errors.txt", "ab") as file:
 
                 file.write(
-                    f"{', '.join(song_artists)} - {song_name}\n {top_match_score:0.2f}pt "
-                    f"{top_result['link']}: {top_result['name']}\n".encode()
+                    f"{', '.join(song_artists)} - {song_name}\n\t{top_match_score:0.2f}pt"
+                    f"\n\t{top_result['link']}\n\t{top_result['name']}\n\n".encode()
                 )
-
-        with open("skipped.txt", "ab") as file:
-            file.write(f"{', '.join(song_artists)} - {song_name}\n".encode())
+        else:
+            with open("skipped.txt", "ab") as file:
+                file.write(f"{', '.join(song_artists)} - {song_name}\n".encode())
 
     if top_result is None:
         return None
