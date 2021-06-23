@@ -208,6 +208,9 @@ def __query_ytmusic(
                 "male",
                 "female",
                 "switching vocals",
+                "instrumental",
+                "remix",
+                "original mix"
             ]
             if word in result["title"].lower() and word not in song_name.lower()
         ]
