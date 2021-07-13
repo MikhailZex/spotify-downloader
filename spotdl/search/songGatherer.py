@@ -54,7 +54,6 @@ def songobj_from_spotify_url(spotifyURL: str, output_format: str = None):
     # else procede
 
     # Get the Song Metadata
-    print(f"Gathering Spotify Metadata for: {spotifyURL}")
     rawTrackMeta, rawArtistMeta, rawAlbumMeta = metadataProvider.from_url(spotifyURL)
 
     songName = rawTrackMeta["name"]
@@ -95,8 +94,7 @@ def songobj_from_spotify_url(spotifyURL: str, output_format: str = None):
         print("Could not match any of the results on YouTube. Skipping")
         return None
     else:
-        print(" " * (len(displayName) + 25), end="\r")
-        print(f'Found YouTube URL for "{displayName}" : {youtubeLink}')
+        print(f'{songName[:25]:>25s}: {youtubeLink}')
 
     # (try to) Get lyrics from Genius
     try:
